@@ -1,2 +1,2 @@
-# Diacritics_restoration
+# Diacritics restoration
 Diacritics restoration
