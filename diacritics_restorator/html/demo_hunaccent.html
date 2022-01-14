@@ -1,0 +1,207 @@
+﻿<html>
+  <head>
+	<style>
+		html, body {
+			background-color: #fafafa;
+		}
+		body {
+		  font-family: "Roboto", sans-serif;
+		  display: flex;
+		  justify-content: center;
+		  align-items: center;
+		 }
+		
+		textarea {
+		  width: 180px;
+		  height: 60px;
+		  color: #000000;
+		}
+
+		.elevation {
+		  box-shadow: 0 3px 1px -2px rgba(0, 0, 0, 0.2), 0 2px 2px 0 rgba(0, 0, 0, 0.14),
+			0 1px 5px 0 rgba(0, 0, 0, 0.12);
+		}
+
+		.card {
+		  background: #fff;
+		  border-radius: 4px;
+		  padding: 16px;
+		  width: auto;
+		  display:inline-block;
+		  margin: 0;
+		  height: max-content;
+		}
+	</style>
+  </head>
+
+  <body>
+	<div class="card elevation">
+		Input:</br><textarea id="input" disabled></textarea>
+		</br>
+		Output:</br><textarea id="output" disabled></textarea>
+		</br>
+		Output <a href="https://github.com/juditacs/hunaccent">hunaccent</a>:</br><textarea id="output_hunaccent" disabled></textarea>
+	</div>
+
+    <script src="https://cdn.jsdelivr.net/npm/onnxjs/dist/onnx.min.js"></script>
+	<script type="text/javascript" src="vocab.js"></script>
+	<script>
+		function trim (s, c) {
+		  if (c === "]") c = "\\]";
+		  if (c === "\\") c = "\\\\";
+		  return s.replace(new RegExp(
+			"^[" + c + "]+|[" + c + "]+$", "g"
+		  ), "");
+		}
+
+		function arg_max(arr) {
+			if (arr.length === 0) {
+				return -1;
+			}
+
+			var max = arr[0];
+			var maxIndex = 0;
+
+			for (var i = 1; i < arr.length; i++) {
+				if (arr[i] > max) {
+					maxIndex = i;
+					max = arr[i];
+				}
+			}
+
+			return maxIndex;
+		}
+
+		class ChrTokenizer{
+			constructor(vocab){     
+				this.vocab = vocab;
+				this.vocab_size = this.vocab.length;
+				this.pad_tok = 0;
+				this.unk_tok = this.vocab.length-1;
+				this.pad_str = vocab[this.pad_tok];
+				this.unk_str = vocab[this.unk_tok];
+			}
+				
+			encode(txt, length=50){
+				var seq = new Array(length).fill(0);
+				var seq_uppercase = new Array(length).fill(false);
+				for (var [idx,chr] of Array.from(txt).entries()){
+					if (chr!=chr.toLowerCase()){
+						seq_uppercase[idx]=true
+					}
+					chr=chr.toLowerCase()					
+					const token = this.vocab.indexOf(chr);
+					if (token==-1){
+						seq[idx]=this.unk_tok;
+					}else{
+						seq[idx]=token;
+					}
+				}
+				
+				return [seq,seq_uppercase];
+			}
+			decode(seq, orig_str='', raw=false, seq_is_uppercase=[]){
+				var str='';
+				for (const [idx,token] of seq.entries()){
+					var chr = this.vocab[token];
+					if (orig_str!='' && chr==this.unk_str){
+						chr = orig_str[idx];
+					}
+					if (seq_is_uppercase!=[]){
+						if (seq_is_uppercase[idx]){
+							chr=chr.toUpperCase()
+						}
+					}
+					str += chr;
+				}
+				if (raw){
+					return str;
+				}else{
+					return trim (str, this.pad_str);
+				}
+				
+			}
+		}
+
+		async function updatePredictions() {
+			// Get the predictions for the canvas data.
+			const input_txt = input_box.value;
+			if(model_input_len<input_txt.length || model_input_len>Math.max(input_txt.length*4,50)){
+				model_input_len=Math.max(input_txt.length*2,50)
+				
+				input_box.removeEventListener('input', updatePredictions);
+				input_box.removeEventListener('onpaste', updatePredictions);
+				
+				sess = new onnx.InferenceSession();
+				sess.loadModel("./best_on_dev.onnx").then(() => {
+					input_box.addEventListener('input', updatePredictions);
+					input_box.addEventListener('onpaste', updatePredictions);
+					updatePredictions()
+				})
+				return
+			}
+			
+			const [input_seq, input_seq_is_uppercase] = tokenizer.encode(input_txt, length=model_input_len)
+			const input_tensor = new onnx.Tensor(new Int32Array(input_seq), "int32");
+			//console.log(input_tensor.data);
+			
+			const outputMap = await sess.run([input_tensor]);
+			const output_tensor = outputMap.values().next().value;
+			
+			var predictions = new Array(output_tensor.data.length).fill(0);
+			for (const [idx,x] of output_tensor.data.entries()){
+				predictions[idx]=x;
+			}
+			const predictions_2d = [];
+			while(predictions.length) predictions_2d.push(predictions.splice(0,tokenizer.vocab_size));
+			//console.log(predictions_2d);
+			var output_seq=[];
+			for (const weights of predictions_2d){
+				output_seq.push(arg_max(weights));
+			}
+			console.log("Raw output: " + tokenizer.decode(output_seq,'',true));
+			output_box.value = tokenizer.decode(output_seq,input_txt,false,input_seq_is_uppercase);
+			
+			const hunaccent_output = accentizer.accentize(input_txt+" ");
+			output_box_hunaccent.value = hunaccent_output;
+		}
+		
+		async function output_box_update_size() {
+			output_box.style.height = input_box.style.height;
+			output_box.style.width = input_box.style.width;
+			output_box_hunaccent.style.height = input_box.style.height;
+			output_box_hunaccent.style.width = input_box.style.width;
+		}
+		
+		var model_input_len = 50
+		const input_box = document.getElementById("input");
+		const output_box_hunaccent = document.getElementById("output_hunaccent");
+		const output_box = document.getElementById("output");
+		const tokenizer = new ChrTokenizer(vocab);
+
+		async function get_onnx(url) {
+		  const response = await fetch(url);
+		  return response.blob();
+		}
+
+		var sess = new onnx.InferenceSession();
+		sess.loadModel("./best_on_dev.onnx").then(() => {
+			input_box.addEventListener('input', updatePredictions);
+			input_box.addEventListener('onpaste', updatePredictions);
+			input_box.disabled=false
+		})
+		
+		input_box.addEventListener('mousemove', output_box_update_size);
+		
+		var accentizer;
+		var Module = {
+		  onRuntimeInitialized: function() {
+			accentizer = new Module.Accentizer();
+			accentizer.load("tree");
+		  }
+		};
+		
+	</script>
+	<script src="hunaccent.js"></script>
+  </body>
+</html>
