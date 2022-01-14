@@ -1,9 +1,9 @@
 name: diacritics
 channels:
-  - anaconda
   - pytorch
   - bokeh
   - conda-forge
+  - anaconda
   - defaults
 dependencies:
   - _libgcc_mutex=0.1=main
@@ -139,13 +139,11 @@ dependencies:
     - blis==0.7.5
     - catalogue==1.0.0
     - cymem==2.0.6
-    - hu-core-ud-lg==0.3.1
     - lemmy==0.1.0
     - murmurhash==1.0.6
     - plac==1.1.3
     - preshed==3.0.6
     - pyyaml==6.0
-    - spacy==2.3.7
     - srsly==1.0.5
     - thinc==7.4.5
     - wasabi==0.8.2
