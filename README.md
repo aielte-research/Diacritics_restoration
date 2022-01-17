@@ -8,7 +8,7 @@
 -->
 <br />
 <div align="center">
-    <h3 align="center">Lightweight Diacritics Restoration for V4 Languages</h3>
+    <h3 align="center">Lightweight Diacritics Restoration</h3>
 
   <p align="center">
     <br />
