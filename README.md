@@ -8,46 +8,36 @@
 -->
 <br />
 <div align="center">
-    <h3 align="center">Lightweight Diacritics Restoration</h3>
-
-  <p align="center">
-    <br />
-    <a href="https://web.cs.elte.hu/~csbalint/diacritics/demo.html?lang=en&model_lang=HU"><strong>Try the model »</strong></a>
-    <br />
-  </p>
+    <h2 align="center">Lightweight Diacritics Restoration<br />with<br />Dilated Convolutional Neural Networks</h2>
+    <h3 align="center">
+        <br />
+            <a href="https://web.cs.elte.hu/~csbalint/diacritics/demo.html?lang=en&model_lang=HU" target="_blank"><strong>Try the model »</strong></a>
+        <br />
+    </h3>
 </div>
-
-
-
-<!-- TABLE OF CONTENTS -->
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#built-with">Built With</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li><a href="#usage">Usage</a></li>
-  </ol>
-</details>
-
-
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-Diacritics restoration became a ubiquitous task in the Latin-alphabet-based English-dominated Internet language environment.
+This project contains code for training and evaluating and inferring lightweight models for diacritics restoration.
+This repository accompanies our <a href="https://arxiv.org/abs/2201.06757" target="_blank"><strong>paper</strong></a>.
+
+### Summary
+
+Diacritics restoration has become a ubiquitous task in the Latin-alphabet-based English-dominated Internet language environment.
 In this repository, we provide a model built with small footprint 1D convolution-based approach, which works on character-level.
-The model even runs locally in a web browser, and surpasses the performance of similarly sized models.
+We find that solutions based on 1D dilated convolutional neural networks are competitive alternatives to models based on recursive neural networks or linguistic modeling for the task of diacritics restoration.
+Our solution surpasses the performance of similarly sized models and is also competitive with larger models.
+A special feature of our solution is that it even runs locally in a web browser. 
+We also provide a working example of this browser-based implementation.
+Our model is evaluated on different corpora, with emphasis on the Hungarian language.
+We performed comparative measurements about the generalization power of the model in relation to three Hungarian corpora.
+We also analyzed the errors to understand the limitation of corpus-based self-supervised training.
+
+### Model architecture visualization
+<p align="center">
+  <img src="./img/A-TCN_4225_zoomed_txt.png" alt="Model Architecture">
+</p>
 
 ### Built With
 
@@ -85,6 +75,5 @@ For the moment refer to the example below and install the missing packages manua
 The following command should work with the small example data provided in this repository. 
 
 ```sh
-CUDA_VISIBLE_DEVICES=0 python run.py -c conf/example.yaml
+CUDA_VISIBLE_DEVICES=0,1 python run.py -c conf/example.yaml
 ```
-
