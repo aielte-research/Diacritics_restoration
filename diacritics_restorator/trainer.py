@@ -2,8 +2,6 @@ import numpy as np
 import random
 import torch
 from tqdm import trange as trange
-from transformers import AdamW
-from transformers import WarmupLinearSchedule as get_linear_schedule_with_warmup
 import pandas as pd
 from itertools import chain
 import os
@@ -114,9 +112,6 @@ class Trainer():
         optimizer_name = optimizer_name.lower()
         if optimizer_name=="adam":
             self.optimizer = torch.optim.Adam(self.model.parameters(), lr = self.params["learning_rate"])
-        elif optimizer_name=="adamw":
-            self.optimizer = AdamW(self.model.parameters(), correct_bias=False, lr = self.params["learning_rate"])
-            self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=100, num_training_steps=1000)
         else:
             raise ValueError(optimizer_name + " is not recognised as a name of an optimizer.")
                         
