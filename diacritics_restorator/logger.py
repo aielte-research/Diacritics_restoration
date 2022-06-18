@@ -11,8 +11,10 @@ import sys
 sys.path.append('../')
 import my_plot
 import cfg_parser
-from my_functions import flatten_dict, human_format, nmbr_with_leading_zeroes, filename_from_path
+from my_functions import flatten_dict, human_format, nmbr_with_leading_zeroes, filename_from_path, getTime
 import create_html
+
+import time
 
 import neptune.new as neptune
 from neptune.new.types import File
@@ -21,6 +23,10 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import _pickle as cPickle
+
+import importlib
+import shutil
+import subprocess
 
 class Endplot_elem():
     def __init__(self, name, y_name, legend_loc="bottom_right"):
@@ -43,9 +49,9 @@ class Endplot_elem():
                                  )
         
 class Endplot():
-    def __init__(self, save_dir, experiment, acc_types=['chr'], benchmarks=['task']):
-        self.aggr_dev_accs = {benchmark: {a_t: Endplot_elem(name = 'dev_aggregate_'+a_t+'_accuracies_'+benchmark,
-                                                            y_name = a_t+" accuracy "+benchmark)
+    def __init__(self, save_dir, experiment, acc_types=['chr'], benchmarks=[{"deaccent":None}]):
+        self.aggr_dev_accs = {str(benchmark): {a_t: Endplot_elem(name = 'dev_aggregate_'+a_t+'_accuracies_'+str(benchmark),
+                                                            y_name = a_t+" accuracy "+str(benchmark))
                                           for a_t in acc_types}
                               for benchmark in benchmarks}
 
@@ -67,24 +73,24 @@ class Endplot():
         for benchmark in self.benchmarks:
             for a_t in self.acc_types:
                 #self.aggr_train_accs[benchmark][a_t].data.append(train_acc[benchmark][a_t])
-                self.aggr_dev_accs[benchmark][a_t].data.append(dev_acc[benchmark][a_t])
+                self.aggr_dev_accs[str(benchmark)][a_t].data.append(dev_acc[str(benchmark)][a_t])
         self.aggr_loss.data.append(loss)
     
     def add_baselines(self, baselines, baseline_names=["hunaccent"]):
         for baseline_name in baseline_names:
             for benchmark in self.benchmarks:
                 for a_t in self.acc_types:
-                    self.aggr_dev_accs[benchmark][a_t].baselines[baseline_name+"_"+a_t]=baselines["dev"][benchmark][baseline_name][a_t]
-                    #self.aggr_train_accs[benchmark][a_t].baselines[baseline_name+"_"+a_t]=baselines["train"][benchmark][baseline_name][a_t]
+                    self.aggr_dev_accs[str(benchmark)][a_t].baselines[baseline_name+"_"+a_t]=baselines["dev"][str(benchmark)][baseline_name][a_t]
+                    #self.aggr_train_accs[str(benchmark)][a_t].baselines[baseline_name+"_"+a_t]=baselines["train"][str(benchmark)][baseline_name][a_t]
         
     def save(self,experiment):
         for benchmark in self.benchmarks:
             for a_t in self.acc_types:
-                # fpath = self.aggr_train_accs[benchmark][a_t].save(self.plotter, self.names)
-                # experiment["visuals/train/"+benchmark+"/"+filename_from_path(fpath)].upload(fpath)
+                # fpath = self.aggr_train_accs[str(benchmark)][a_t].save(self.plotter, self.names)
+                # experiment["visuals/train/"+str(benchmark)+"/"+filename_from_path(fpath)].upload(fpath)
 
-                fpath = self.aggr_dev_accs[benchmark][a_t].save(self.plotter, self.names)
-                experiment["visuals/dev/"+benchmark+"/"+filename_from_path(fpath)].upload(fpath)
+                fpath = self.aggr_dev_accs[str(benchmark)][a_t].save(self.plotter, self.names)
+                experiment["visuals/dev/"+str(benchmark)+"/"+filename_from_path(fpath)].upload(fpath)
         
         fpath = self.aggr_loss.save(self.plotter, self.names)
         experiment["visuals/train/"+filename_from_path(fpath)].upload(fpath)
@@ -115,18 +121,31 @@ class Logger():
             "accuracy_types": ["chr", "imp_chr", "sntnc", "word"],
             "accuracy_plot_dashes": ["dotted", "dotted", "solid", "dashed"],
             "baselines": [],
-            "benchmark_types": ["task", "deaccent", "copy"]
+            "benchmarks": [{"deaccent":None}],
+            "draw_network": None,
+            "endplot_extend_from": None
         }
-        self.logger_params = self.test_cases[0]["logger_params"]
+        logger_params = self.test_cases[0]["logger_params"]
         for key in default_params:
-            self.logger_params[key] = self.logger_params.get(key, default_params[key])
+            logger_params[key] = logger_params.get(key, default_params[key])
+        for k, v in logger_params.items():
+            setattr(self, k, v)
 
         with open('neptune_cfg.yaml') as file: 
             self.neptune_cfg = yaml.load(file, Loader = yaml.FullLoader)
+
+        if self.draw_network!=None:
+            spec = importlib.util.spec_from_file_location("visualize_TCN", "../tools/visualize_TCN.py")
+            visualize_TCN = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(visualize_TCN)
+            self.Visualize_TCN = visualize_TCN.Visualize_TCN
+
+            from pdflatex import PDFLaTeX
+            self.PDFLaTeX=PDFLaTeX
     
         self.print_to_scrn = print_to_scrn
         
-        self.root_dir = os.path.join(self.neptune_cfg["offline_logging_dir"], str(datetime.datetime.now()).replace(" ","/").replace(":","-").split(".")[0]) + '_' + self.logger_params["name_base"]
+        self.root_dir = os.path.join(self.neptune_cfg["offline_logging_dir"], str(datetime.datetime.now()).replace(" ","/").replace(":","-").split(".")[0]) + '_' + self.name_base
         os.makedirs(self.root_dir)
         
         self.plotter = my_plot.Bokeh_plotter()
@@ -137,11 +156,11 @@ class Logger():
             self.save_yaml(orig_config, 'cfg_orig', aggr = True)
             self.save_yaml(self.test_cases, 'cfg_serialized', aggr = True)
 
-            self.endplot = Endplot(self.root_dir, self.aggr_experiment, self.logger_params["accuracy_types"], self.logger_params["benchmark_types"])
-            if 'endplot_extend_from' in self.logger_params.keys() :
-                self.endplot.load_class(os.path.join(self.logger_params['endplot_extend_from'], "endplot_class"))
+            self.endplot = Endplot(self.root_dir, self.aggr_experiment, self.accuracy_types, self.benchmarks)
+            if self.endplot_extend_from!=None:
+                self.endplot.load_class(os.path.join(self.endplot_extend_from, "endplot_class"))
                 
-            self.dev_max_accs = pd.DataFrame(columns = self.logger_params["accuracy_types"])
+            self.dev_max_accs = pd.DataFrame(columns = self.accuracy_types)
          
         self.baselines={}
 
@@ -150,15 +169,15 @@ class Logger():
     
     def endplot_add_baselines(self, baselines):
         if len(self.test_cases)>1:
-            self.endplot.add_baselines(baselines, self.logger_params["baselines"])
+            self.endplot.add_baselines(baselines, self.baselines)
 
         self.baselines  = baselines
         
     def init_experiment(self, test_case):
         self.experiment_idx+=1
 
-        test_case["name"] = nmbr_with_leading_zeroes(self.experiment_idx, self.leading_zeroes) + '_' + self.logger_params["name_base"]
-        for val in self.logger_params["name_fields"]:
+        test_case["name"] = nmbr_with_leading_zeroes(self.experiment_idx, self.leading_zeroes) + '_' + self.name_base
+        for val in self.name_fields:
             test_case["name"] +=  "__"+val[1]+"-"+ str(test_case[val[0]][val[1]]).replace('/','-')
         
         if test_case["name"]!="":
@@ -189,7 +208,7 @@ class Logger():
             print(self.endplot.names)
         
         self.experiment = neptune.init(project = self.neptune_cfg['project_qualified_name'],api_token = self.neptune_cfg['api_token'],
-                                        source_files = ['*.py', test_case["model_dir"] + '/*.py']+['../my_functions.py', '../my_plot.py', 'environment.yml'])
+                                        source_files = ['*.py', "./models/*.py", '../my_functions.py', '../my_plot.py', 'environment.yml', 'environment.yml','important_chars.json'])
         self.experiment["parameters"] = test_case
         
         #copyfile('eval.py', os.path.join(self.exp_dir, 'eval.py'))
@@ -200,12 +219,21 @@ class Logger():
         copyfile('evaluator.py', os.path.join(self.src_dir, 'evaluator.py'))
         #copyfile('examples.txt', os.path.join(self.src_dir, 'examples.txt'))
         #copyfile('examples.tab', os.path.join(self.src_dir, 'examples.tab'))
-        copyfile(os.path.join(test_case["model_dir"],'model.py'), os.path.join(self.src_dir, 'model.py'))
+        copyfile(os.path.join("./models",test_case["net_params"]["fname"]), os.path.join(self.src_dir, test_case["net_params"]["fname"]))
         
         self.experiment["sys/tags"].add(list(test_case["tags"]))
         self.save_yaml(test_case, "config")
         
         self.plotter.save_dir = self.pic_dir
+
+        if self.draw_network!=None:
+            self.pdf_dir = os.path.join(self.exp_dir, "pdf")
+            os.makedirs(self.pdf_dir)
+            shutil.copyfile("../tools/pdf/convert.tex", os.path.join(self.pdf_dir, "convert.tex"))
+            self.log_network_draw()
+            self.log_network_draw(draw_color="category10_{}".format(self.experiment_idx%10), name_suffix="_color")
+            self.log_network_draw(zoom=True, name_suffix="_zoom")
+            self.log_network_draw(draw_color="category10_{}".format(self.experiment_idx%10), name_suffix="_color_zoom",zoom=True)
             
     def done(self):
         #os.rename(self.exp_dir, self.exp_dir + "_done")
@@ -224,7 +252,34 @@ class Logger():
             return os.path.join(self.root_dir, fname)
         else:
             return os.path.join(self.data_dir, fname)
-            
+
+    def log_network_draw(self,draw_color="black",name_suffix="",zoom=False):
+        ATCN_structure=self.test_case["net_params"]["ATCN_structure"]
+
+        tikz_fpath=os.path.join(self.pdf_dir, "A-TCN_{}{}{}{}{}{}.tikz".format(*ATCN_structure.values(),name_suffix))
+
+        vis = self.Visualize_TCN(**ATCN_structure, colorful=False, draw_color=draw_color, zoom_top=zoom)
+        vis.save_tikz(fname=tikz_fpath,background_arrow_style="my_dotted_line")
+        self.log_artifact(tikz_fpath, category="network_vis/tikz")
+        self.log_network_draw_pdf(tikz_fpath)
+        
+    def log_network_draw_pdf(self,tikz_fpath):
+        start_time = time.time()
+        self.myprint("Building pdf from "+tikz_fpath)
+        pdf_fname=os.path.basename(tikz_fpath).split(".")[0]+".pdf"
+        shutil.copyfile(tikz_fpath, os.path.join(self.pdf_dir, "content.tex"))
+
+        cwd=os.getcwd()
+        os.chdir(self.pdf_dir)
+        os.popen("pdflatex convert.tex").read()
+        if os.path.exists("convert.pdf"):
+            os.rename("convert.pdf", pdf_fname)
+        self.log_artifact(pdf_fname, category="network_vis")
+        self.log_artifact("convert.log", category="network_vis/log")
+        os.chdir(cwd)
+        self.myprint(getTime(time.time() - start_time))
+        
+        
     def log_artifact(self, fpath, aggr = False, category=''):
         if aggr:
             if len(self.test_cases)>1:
@@ -272,21 +327,21 @@ class Logger():
         
         self.log_artifact(fpath, aggr, category=category)
         
-    def save_accs_plot(self, data, labels, benchmark='task'):
+    def save_accs_plot(self, data, labels, benchmark={"deaccent":None}):
         baselines={}
         if len(self.baselines)>0:
-            for bn, val1 in self.baselines['dev'][benchmark].items():
+            for bn, val1 in self.baselines['dev'][str(benchmark)].items():
                 for typ, val2 in val1.items():
                     baselines[bn+'_'+ typ+'_baseline']=val2
         fpath = self.plotter.general_line(data,
                                           xlabel = 'epoch',
                                           ylabel = 'accuracy',
-                                          title = benchmark + ' accuracy after each epoch',
+                                          title = str(benchmark) + ' accuracy after each epoch',
                                           labels = labels,
-                                          fname = benchmark+"_accuracies",
+                                          fname = str(benchmark)+"_accuracies",
                                           legend_location = "bottom_right",
                                           baselines = baselines,
-                                          dashes = self.logger_params["accuracy_plot_dashes"],
+                                          dashes = self.accuracy_plot_dashes,
                                           avgs=10
                                          )
         self.log_artifact(fpath, category='visuals/accuracies') 
@@ -309,7 +364,7 @@ class Logger():
     #def update_endplot(self, train_accs, dev_accs, loss):
         if len(self.test_cases)>1:
             #dev_max_acc = pd.DataFrame.from_dict({self.endplot.names[-1]:
-            #                                      [max(dev_accs[a_t]) for a_t in self.logger_params["accuracy_types"]] },
+            #                                      [max(dev_accs[a_t]) for a_t in self.accuracy_types] },
             #                                     columns = dev_accs.columns,
             #                                     orient = 'index')
             
@@ -336,6 +391,7 @@ class Logger():
                              )
 
         self.log_artifact(os.path.join(self.html_dir, "demo_merged.html"))
+        #self.log_artifact(os.path.join(self.html_dir, "demo_merged_ort.html"))
         self.log_artifact(os.path.join(self.html_dir, "best_on_dev.onnx"), category='model')
 
     def save_endplot(self):

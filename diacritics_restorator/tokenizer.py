@@ -11,7 +11,7 @@ class ChrTokenizer():
                 vocab = [pad]+sorted(vocab, key=lambda x: charsCnt[x], reverse=True)+[unk]
             
 
-        self.vocab = vocab
+        self.vocab = list(vocab)
         self.vocab_lookup = {char: idx for idx, char in enumerate(vocab)}
         self.vocab_size = len(self.vocab)
         self.pad_str = vocab[0]
@@ -22,8 +22,8 @@ class ChrTokenizer():
             self.unk_str = vocab[-2]
             self.mask_tok = self.vocab_size-2
         
-    def encode(self, text, max_length=0, char_transforms_lang = None):
-        if char_transforms_lang == 'HUN':
+    def encode(self, text, max_length=0, language = None):
+        if language == 'HUN':
             s = [self.char_transforms_hun(char) for char in list(text)]
         else:
             s = [self.vocab_lookup[char] if char in self.vocab_lookup 
@@ -35,19 +35,23 @@ class ChrTokenizer():
         
         return s[:max_length]
     
-    def decode(self, seq, orig_str=None, char_transforms_lang = None):
-        if char_transforms_lang == 'HUN':
+    def decode(self, seq, orig_str=None, language = None):
+        s=''
+        if language == 'HUN':
             assert(orig_str!=None)
-            s=''
             for token,char in zip(seq,list(orig_str)):
                 s += self.char_transforms_decode_hun(token,char)
         else:
-            s=''
-            for idx,token in enumerate(seq):
-                c = self.vocab[token]
-                if orig_str!=None and c==self.unk_str:
-                    c = orig_str[idx]
-                s += c
+            if orig_str==None:
+                for token in seq:
+                    c = self.vocab[token]
+                    s += c
+            else:
+                for idx,token in enumerate(seq):
+                    c = self.vocab[token]
+                    if c==self.unk_str:
+                        c = orig_str[idx]
+                    s += c
         return s
     
     def char_transforms_pol(self,char):

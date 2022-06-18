@@ -13,8 +13,9 @@ from bokeh.plotting import figure, output_file, save, ColumnDataSource, show
 from bokeh.palettes import Category10, Greys256, Inferno256, Turbo256
 from bokeh.transform import transform
 from bokeh.layouts import column
-from bokeh.models import BasicTicker, ColorBar, LinearColorMapper, CustomJS, Select, ColumnDataSource, PrintfTickFormatter, HoverTool, Span
+from bokeh.models import BasicTicker, ColorBar, LinearColorMapper, CustomJS, Select, ColumnDataSource, PrintfTickFormatter, HoverTool, Span, Plot
 from bokeh.io import output_notebook
+#from bokeh.io import export_svgs
 import colorcet as cc
 
 def get_string_val(lst, i):
@@ -45,6 +46,8 @@ class Bokeh_plotter():
     def finish_plot(self, p):
         if self.output_fname!="":
             output_file(self.output_fname)
+            #plot = Plot(output_backend="svg")
+            #export_svgs(plot, filename=self.output_fname[:-4]+"svg")
         if self.settings["show_plot"]:
             output_notebook()
             show(p)
@@ -99,6 +102,19 @@ class Bokeh_plotter():
         return fpath
 
     def general_line(self, ys, xlabel="", ylabel="", title="", width=None, height=None, labels=[], fname="", legend_location="top_right", baselines={}, dashes=["solid"], x=[],avgs=0):
+        fpath = self.set_output_fname(fname)
+        
+        if len (ys)==0:
+            p = figure()
+            self.finish_plot(p)
+            
+            return fpath
+        if len(ys[0])==0:
+            p = figure()
+            self.finish_plot(p)
+            
+            return fpath
+
         if x==[]:
             x=list(range(len(ys[0])+1))[1:]
 
@@ -183,7 +199,6 @@ class Bokeh_plotter():
                                           ("argmin", "@argmin")
                                           ]))
         
-        fpath = self.set_output_fname(fname)
         self.finish_plot(p)
         
         return fpath

@@ -1,62 +1,57 @@
-model_dir: ./models/TCN
-  
 logger_params:
-    name_base: example_config
-    name_fields:  !!python/tuple [[net_params,feature_size]]
-    tags: !!python/tuple [Naplava,webcorpus_2,hun,TCN,diacritics,residual]
-    accuracy_types: !!python/tuple [chr, imp_chr, alpha_word, amb_word, sntnc]
-    accuracy_plot_dashes: !!python/tuple [dotted,dotted,dashed,dashed,solid]
-    benchmark_types: !!python/tuple ["task", "deaccent"]
-    baselines: !!python/tuple [hunaccent]
-    #endplot_extend_from: /data/csbalint/logs/2021-03-25/15-49-00_webcorpus_2_TCN/
+  name_base: example_config
+  name_fields:  !!python/tuple [[net_params,fname]]
+  tags: !!python/tuple [webcorpus_2,HUN,A-TCN,diacritics,residual]
+  accuracy_types: !!python/tuple [chr, imp_chr, alpha_word, amb_word, sntnc]
+  accuracy_plot_dashes: !!python/tuple [dotted,dotted,dashed,dashed,solid]
+  benchmarks: !!python/tuple [{"soft_deaccent":{"keep_rate": 0.2}}, {"deaccent": null}]
+  #baselines: !!python/tuple [hunaccent]
+  #endplot_extend_from: /data/csbalint/logs/2021-03-25/15-49-00_webcorpus_2_TCN/
 data_params:
-  char_transforms_lang: None
-  data_cut_rate: 0
-  dev_rate: 0.1
+  language: "HU" # HU, PL, CZ, SK
+
   file_path: ../webcorpus_2/2019_0.001
   file_type: json_dir
-  fixed_batch_lengths: false
-  charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,?!();:-%&=+/\\\"' \nÉÁŐÚŰÍÖÜÓĆéáőúűíöüóŃŚŹĄĘŁŻćńśźąęłżČĚŠÝŽŘŇŤĎŮčěšýžřňťďůÄÔŔĹĽäôŕĺľ"
-  important_chars: "eaouiEAOUIéáőúűíöüóÉÁŐÚŰÍÖÜÓ"
-  lower_case: true
+  data_cut_rate: 0
+
   max_length: 0
+  fixed_batch_lengths: false
+
+  charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,?!();:-%&=+/\\\"' \nÉÁŐÚŰÍÖÜÓĆéáőúűíöüóŃŚŹĄĘŁŻćńśźąęłżČĚŠÝŽŘŇŤĎŮčěšýžřňťďůÄÔŔĹĽäôŕĺľ"
+  lower_case: true
   pad_char: _
-  prepared_data: false
-  random_seed: 
-    - 42
-  soft_deaccent: 
-    é: !!python/tuple [e]
-    á: !!python/tuple [a]
-    í: !!python/tuple [i]
-    ö: !!python/tuple [o]
-    ü: !!python/tuple [u]
-    ó: !!python/tuple [o]
-    ő: !!python/tuple [o,ö]
-    ú: !!python/tuple [u]
-    ű: !!python/tuple [u,ü]
-  soft_deaccent_keep_rate: 0.2
-  sort_data_by_length: true
-  tokenizer: chr
-  train_rate: 0.8
   unk_char: '*'
+  mask_char: '#'
+
+  random_seed: 42
+
+  sort_data_by_length: true
+  train_rate: 0.8
   vocabThreshold: 50
-  batch_limit: 400
+  batch_limit: 500
 net_params:
-  model_state_dict_path: #/data/csbalint/logs/diacritics/2021-10-20/21-22-10_Naplava_hun_TCN/1_Naplava_hun_TCN/model/best_on_dev.pt
-  batch_norm: true
-  block_size: 2
-  dilation_base: 2
-  dropout: 0.05
+  model_state_dict_path: null #/data/logs/diacritics/2021-10-20/21-22-10/model/best_on_dev.pt
+  fname: ATCN.py
   embedding_dim: 32
-  feature_size: 256
-  num_blocks: 4
+  seq2seq_in_channels: 256
+  dropout: 0.05
+  spatial_dropout: false
+  batch_norm: true
+
   padding_mode: zeros
-  residual:
-    enabled: true
-    projection: false
-  spatial_dropout: true
-  window_size: 5
-  linear_feature_increase: false
+  residual_type: sum
+  residual_proj: false
+  ATCN_structure:
+    num_blocks: 4
+    block_size: 2
+    dilation_base: 2
+    window_size: 5
+    dilation_only_at_first: false
+  SENet_r: null
+  ECA_Net: false
+  activation:
+    name: ReLU
+
 train_params:
   batch_size: 50
   early_stopping_delta: 0
@@ -70,4 +65,7 @@ train_params:
   parallel: true
   save_final_model: false
   eval_batch_limit: 40
+  augmentations:
+    soft_deaccent:
+      keep_rate: 0.2
 wrong_examples_nmbr: 0

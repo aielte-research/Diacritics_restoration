@@ -1,13 +1,14 @@
 import numpy as np
 import random
 import torch
+import torch.nn as nn
 from tqdm import trange as trange
 import pandas as pd
 from itertools import chain
 import os
 
 import time
-from my_functions import getTime, df_avg
+from my_functions import getTime, df_avg, RunningAverage, Parallel_loop
 
 import evaluator
 
@@ -75,7 +76,11 @@ class Trainer():
             "train_on_output": False,
             "train_on_output_start": 20,
             "eval_batch_limit": None,
-            "accuracy_names": ["dev"]
+            "accuracy_names": ["dev"],
+            "learning_rate":.0003,
+            "epochs":20,
+            "batch_size":50,
+            "infer_batch_size": 50
         }
         self.params = params
         for key in default_params:
@@ -90,14 +95,82 @@ class Trainer():
         self.set_optimizer(self.params["optimizer"])
         
         self.avgLosses = [] 
-        self.accs_dfs = {name: {benchmark_type: pd.DataFrame(columns=self.params["accuracy_types"]) for benchmark_type in self.params["benchmark_types"]} for name in self.params["accuracy_names"]}
+        self.accs_dfs = {name: {str(benchmark): pd.DataFrame(columns=self.params["accuracy_types"]) for benchmark in self.params["benchmarks"]} for name in self.params["accuracy_names"]}
         self.best_dev_acc=-1
                 
-    def epoch(self):
-        raise Exception("Trainer.epoch is undefined!")
-    
+    def epoch(self,i=0):
+        class Epoch_loop(Parallel_loop):
+            def __init__(self, generator, params={}):
+                super().__init__(generator, params)
+                
+                self.loss_avg = RunningAverage()
+                self.step = 0
+                self.model.train()
+
+            def function(self, data):
+                input_batch, goal_batch, _ = data
+                self.step+=1
+                output_batch = self.model(input_batch)
+
+                loss = self.loss_fn(output_batch, goal_batch)
+                
+                if self.gradient_accumulation_steps > 1:
+                    loss /= self.gradient_accumulation_steps
+                
+                self.loss_avg.update(float(loss.mean().item()))
+
+                loss.mean().backward()
+                if self.step % self.gradient_accumulation_steps == 0:
+                    self.optimizer.step()
+                    self.optimizer.zero_grad(set_to_none=True)
+
+        el=Epoch_loop(self.data.batch_iterator(self.data.train, self.params["batch_size"], augmentations=self.params["augmentations"]),
+                      {"model":self.model, "loss_fn":self.loss_fn, "optimizer":self.optimizer,
+                       "gradient_accumulation_steps":self.params["gradient_accumulation_steps"]}
+                     )
+        el()
+
+        if el.step % self.params["gradient_accumulation_steps"] != 0:
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            
+        self.avgLosses.append(el.loss_avg())
+        
+        return el.loss_avg
+
+
     def get_results(self, model, iterator):
-        raise Exception("Trainer.get_results is undefined!")
+        class Epoch_loop(Parallel_loop):
+            def __init__(self, generator, params={}):
+                super().__init__(generator, params)
+
+                self.inp = []
+                self.res = []
+                self.goal = []
+                self.conf = []
+                self.softmax = nn.Softmax(dim=2)
+
+            def function(self, data):
+                input_batch, goal_batch, length_batch = data
+
+                output_batch = self.model(input_batch).permute(0, 2, 1)
+
+                res_distr = [seq[:length_batch[idx]] for idx,seq in enumerate(self.softmax(output_batch).detach().cpu().numpy())]
+                input_batch_lst = [seq[:length_batch[idx]] for idx,seq in enumerate(input_batch.cpu().numpy())]
+                goal_batch_lst = [seq[:length_batch[idx]] for idx,seq in enumerate(goal_batch.detach().cpu().numpy())]
+                output_batch_lst = [seq[:length_batch[idx]] for idx,seq in enumerate(output_batch.data.detach().cpu().numpy())]           
+
+                results = classify(output_batch_lst)
+                self.res += results
+
+                self.inp += list(input_batch_lst)
+                self.goal += list(goal_batch_lst)
+
+                self.conf += [[vec[results[seq_idx][vec_idx]] for vec_idx,vec in enumerate(seq)] for seq_idx,seq in enumerate(res_distr)]
+
+        el=Epoch_loop(iterator, {"model": model})
+        el()
+        return el.inp, el.res, el.goal, el.conf
     
     def get_loss_fn(self, loss_fn_name):
         loss_fn_name = loss_fn_name.lower()
@@ -115,13 +188,13 @@ class Trainer():
         else:
             raise ValueError(optimizer_name + " is not recognised as a name of an optimizer.")
                         
-    def save_wrongs(self, inputs, results, goals, nmbr=0, highlight_chr='"', benchmark='task'):
+    def save_wrongs(self, inputs, results, goals, nmbr=0, highlight_chr='"', benchmark={'deaccent':None}):
         if nmbr is None:
             return
         
         wrongs = [i for i, (res, goal) in enumerate(zip(results, goals)) if res!=goal]
         
-        if nmbr == 0:
+        if nmbr == -1:
             nmbr=len(wrongs)
         
         wrongs = random.sample(wrongs, min(nmbr,len(wrongs)))
@@ -149,27 +222,27 @@ class Trainer():
             strng += "Result: " + res + "\n"
             strng += "Truth:  " + tru + "\n\n"
     
-        self.lgr.save_txt(strng, "wrong_sentences_sample_"+benchmark)
+        self.lgr.save_txt(strng, "wrong_sentences_sample_"+str(benchmark))
     
-    def eval_data_set(self, data_set, name, batch_size = None, wrong_examples_nmbr = None, benchmark='task'):
+    def eval_data_set(self, data_set, name, batch_size = None, wrong_examples_nmbr = None, benchmark={"deaccent":None}):
         if batch_size is None:
             batch_size = self.params["batch_size"]
         
-        inputs, results, goals, confidences = self.get_results(self.model, self.data.batch_iterator(data_set, batch_size, shuffle=False, benchmark=benchmark, batch_limit=self.params["eval_batch_limit"]))
+        inputs, results, goals, confidences = self.get_results(self.model, self.data.batch_iterator(data_set, batch_size, shuffle=False, augmentations=benchmark, batch_limit=self.params["eval_batch_limit"]))
         inputs_str = [self.data.tokenizer.decode(seq) for seq in inputs]
-        results_str = [self.data.tokenizer.decode(seq, strng, char_transforms_lang = self.data.params["char_transforms_lang"]) for seq, strng in zip(results,inputs_str)]
-        goals_str = [self.data.tokenizer.decode(seq, strng, char_transforms_lang = self.data.params["char_transforms_lang"]) for seq, strng in zip(goals,inputs_str)]
+        results_str = [self.data.tokenizer.decode(seq, strng, language = self.data.params["language"]) for seq, strng in zip(results,inputs_str)]
+        goals_str = [self.data.tokenizer.decode(seq, strng, language = self.data.params["language"]) for seq, strng in zip(goals,inputs_str)]
         
         ret={}
 
         for acc_type in self.params["accuracy_types"]:
             accuracy, correct, false = evaluator.get_accuracy(inputs_str, results_str, goals_str, acc_type, self.data.params["important_chars"])
-            self.lgr.experiment[os.path.join('metrics', name, acc_type, benchmark, 'accuracy')].log(accuracy)
-            self.lgr.experiment[os.path.join('metrics', name, acc_type, benchmark, 'correctly_classified')].log(correct)
-            self.lgr.experiment[os.path.join('metrics', name, acc_type, benchmark, 'falsely_classified')].log(false)
+            self.lgr.experiment[os.path.join('metrics', name, acc_type, str(benchmark), 'accuracy')].log(accuracy)
+            self.lgr.experiment[os.path.join('metrics', name, acc_type, str(benchmark), 'correctly_classified')].log(correct)
+            self.lgr.experiment[os.path.join('metrics', name, acc_type, str(benchmark), 'falsely_classified')].log(false)
             ret[acc_type]=[accuracy]
 
-        self.lgr.save_df(self.get_class_df(results, goals), name + '_characters_df_'+benchmark, category='metrics/datafames/'+name+'/characters')
+        self.lgr.save_df(self.get_class_df(results, goals), name + '_characters_df_'+str(benchmark), category='metrics/datafames/'+name+'/characters')
             
         if wrong_examples_nmbr!=None and name=="dev":
             self.save_wrongs(inputs_str, results_str, goals_str, wrong_examples_nmbr, benchmark=benchmark)
@@ -187,21 +260,21 @@ class Trainer():
             start_time = time.time()
             
             for name in self.params["accuracy_names"]:
-                for benchmark in self.params["benchmark_types"]:
-                    accs[name][benchmark], results, goals = self.eval_data_set(getattr(self.data, name), name, benchmark=benchmark)
+                for benchmark in self.params["benchmarks"]:
+                    accs[name][str(benchmark)], results, goals = self.eval_data_set(getattr(self.data, name), name, benchmark=benchmark)
                     if name=="dev":
-                        if self.best_dev_acc < accs["dev"]["task"]["chr"][0]:
-                            self.lgr.conf_mtx(goals, results, self.data.tokenizer.vocab, name+"_confmtx_"+benchmark+"_bestOnDev")
-                    self.lgr.myprint(benchmark + " accuracies on "+name+" data:")
-                    self.lgr.myprint(accs[name][benchmark],"\n")
-                    self.accs_dfs[name][benchmark] = self.accs_dfs[name][benchmark].append(accs[name][benchmark], ignore_index=True)
+                        if self.best_dev_acc < accs["dev"][str(self.params["benchmarks"][0])]["chr"][0]:
+                            self.lgr.conf_mtx(goals, results, self.data.tokenizer.vocab, name+"_confmtx_"+str(benchmark)+"_bestOnDev")
+                    self.lgr.myprint(str(benchmark) + " accuracies on "+name+" data:")
+                    self.lgr.myprint(accs[name][str(benchmark)],"\n")
+                    self.accs_dfs[name][str(benchmark)] = self.accs_dfs[name][str(benchmark)].append(accs[name][str(benchmark)], ignore_index=True)
             
             self.lgr.myprint(getTime(time.time() - start_time))
 
             self.update_accs_plot()
             
-            if self.best_dev_acc < accs["dev"]["task"]["chr"][0]:
-                self.best_dev_acc = accs["dev"]["task"]["chr"][0]
+            if self.best_dev_acc < accs["dev"][str(self.params["benchmarks"][0])]["chr"][0]:
+                self.best_dev_acc = accs["dev"][str(self.params["benchmarks"][0])]["chr"][0]
                 self.best_dev_idx = epoch_idx
 
                 if self.params["parallel"]:
@@ -211,16 +284,16 @@ class Trainer():
                     
             self.lgr.myprint("")
             
-            return accs["dev"]["task"]["imp_chr"][0]
+            return accs["dev"][str(self.params["benchmarks"][0])]["imp_chr"][0]
 
     def update_accs_plot(self):
-        for benchmark in self.params["benchmark_types"]:
+        for benchmark in self.params["benchmarks"]:
             accs_list = []   
             labels = [] 
             for name in self.params["accuracy_names"]:
-                accs_list += [self.accs_dfs[name][benchmark][col].tolist() for col in self.accs_dfs[name][benchmark].columns]
+                accs_list += [self.accs_dfs[name][str(benchmark)][col].tolist() for col in self.accs_dfs[name][str(benchmark)].columns]
 
-                labels += [name+' '+col+' acc' for col in self.accs_dfs[name][benchmark].columns]
+                labels += [name+' '+col+' acc' for col in self.accs_dfs[name][str(benchmark)].columns]
         
             self.lgr.save_accs_plot(accs_list,labels,benchmark=benchmark)
         
@@ -228,8 +301,8 @@ class Trainer():
         self.lgr.save_json(self.avgLosses, "avg_losses", category='metrics/datafames/train')
 
         for name in self.params["accuracy_names"]:
-            for benchmark in self.params["benchmark_types"]:
-                self.lgr.save_df(self.accs_dfs[name][benchmark], name+"_accuracies_"+benchmark, category='metrics/datafames/'+name+"/accuracies")
+            for benchmark in self.params["benchmarks"]:
+                self.lgr.save_df(self.accs_dfs[name][str(benchmark)], name+"_accuracies_"+str(benchmark), category='metrics/datafames/'+name+"/accuracies")
         
         self.lgr.save_losses_plot([self.avgLosses])
         
@@ -251,13 +324,13 @@ class Trainer():
             accs = {name: {} for name in self.params["accuracy_names"]}
             
             for name in self.params["accuracy_names"]:
-                for benchmark in self.params["benchmark_types"]:
+                for benchmark in self.params["benchmarks"]:
                     wen=None
                     if name=="dev":
                         wen=wrong_examples_nmbr
 
                     
-                    accs[name][benchmark], results, goals = self.eval_data_set( getattr(self.data, name),
+                    accs[name][str(benchmark)], results, goals = self.eval_data_set( getattr(self.data, name),
                                                                                 name,
                                                                                 batch_size = self.params["infer_batch_size"],
                                                                                 benchmark = benchmark,
@@ -266,10 +339,10 @@ class Trainer():
                     
 
                     if name=="dev":
-                        self.lgr.conf_mtx(goals, results, self.data.tokenizer.vocab, name+"_confmtx_"+benchmark+"_bestOnDev")
+                        self.lgr.conf_mtx(goals, results, self.data.tokenizer.vocab, name+"_confmtx_"+str(benchmark)+"_bestOnDev")
 
-                    self.lgr.myprint(benchmark + " accuracies on "+name+" data:")
-                    self.lgr.myprint(accs[name][benchmark],"\n")
+                    self.lgr.myprint(str(benchmark) + " accuracies on "+name+" data:")
+                    self.lgr.myprint(accs[name][str(benchmark)],"\n")
             
     def get_class_df(self, results, goals):
         results = list(chain.from_iterable(results))

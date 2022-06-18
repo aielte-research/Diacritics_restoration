@@ -60,16 +60,29 @@ def get_accuracy(inputs, results, goals, acc_type='chr', important_chars=""):
 
 def get_baseline(inputs, goals, important_chars, accuracy_types, baseline_name = 'hunaccent'):
     if baseline_name == 'hunaccent':
-        p = subprocess.Popen(['./hunaccent/hunaccent', 'hunaccent/tree/'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        stdout,stderr = p.communicate(input=str.encode(' __________**++**__________ '.join(inputs)))
-        results = stdout.decode('utf-8')[:-1].split(' __________**++**__________ ')
-        #for a,b,c in zip(inputs[:20],goals[:20],results[:20]):
-        #    print(a)
-        #    print(b)
-        #    print(c)
-        #    print("-------------")
+        results=[]
+        #print("Getting Hunaccent baseline")
+        for i in tqdm(range(int(len(inputs)/10000)+1)):
+
+            p = subprocess.Popen(['./hunaccent/hunaccent', 'hunaccent/tree/'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            stdout,stderr = p.communicate(input=str.encode(' __________**++**__________ '.join(inputs[i*10000:(i+1)*10000])))
+            results+=stdout.decode('utf-8')[:-1].split(' __________**++**__________ ')
+        
     elif baseline_name == 'copy':
         results = [unidecode(seq) for seq in inputs]
+    elif baseline_name == 'dictionary':
+        with open("/data/diacritics/webcorpus_2/freq_dictionary.json") as f:
+            dictionary = json.load(f)
+
+        results=[]
+        for seq in inputs:
+            res=seq
+            for m in re.finditer(r'\w+', seq):
+                input_wrd=seq[slice(*m.span())]
+                if input_wrd in dictionary:
+                    res=res[:m.span()[0]]+dictionary[input_wrd]+res[m.span()[1]:]
+        
+            results.append(res)
     else:
         raise ValueError(baseline_name + " is not recognized as a baseline name.")
 

@@ -8,42 +8,21 @@ import os
 from shutil import copyfile
 
 def save_onnx(config, state_dict_fpath, onnx_fpath):
-    spec = importlib.util.spec_from_file_location("model_lib",
-                                                      os.path.join(config["model_dir"],"model.py"))
+    spec = importlib.util.spec_from_file_location("model_lib",os.path.join("./models",config["net_params"]["fname"]))
     model_lib = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(model_lib)
-    if config["model_dir"]=='./TCN':
-        class Net_onnx(model_lib.Net):
-            def __init__(self, params):
-                super(Net_onnx, self).__init__(params)
+    class Net_onnx(model_lib.Net):
+        def __init__(self, params):
+            super(Net_onnx, self).__init__(params)
 
-            def forward(self, batch):
-                emb = self.embedding(batch.unsqueeze(dim = 0))
-                if self.residual_scale=="upsample":
-                    emb = emb.reshape(shape=(1,self.inner_dim,-1))
-                output = emb
-                if self.use_residual:
-                    for convs,residual in zip(self.convs,self.residuals):
-                        output = torch.cat([conv(output) for conv in convs], dim = 1) + residual(output)
-                else:
-                    for convs in self.convs:
-                        output = torch.cat([conv(output) for conv in convs], dim = 1)
-                pred = self.fc(output)
-                return pred.squeeze(dim = 0).permute((1,0))
-
-    else:
-        class Net_onnx(model_lib.Net):
-            def __init__(self, params):
-                super(Net_onnx, self).__init__(params)
-
-            def forward(self, batch):
-                return super(Net_onnx, self).forward(batch.unsqueeze(dim = 0)).squeeze(dim = 0).permute((1,0))
+        def forward(self, batch):
+            return super(Net_onnx, self).forward(batch.unsqueeze(dim = 0)).squeeze(dim = 0).permute((1,0))
         
     onnx_model = Net_onnx(config["net_params"])      
     onnx_model.load_state_dict(torch.load(state_dict_fpath))
     onnx_model.eval()
     
-    dummy_input = (torch.zeros(50).long())
+    dummy_input = (torch.zeros(50).int())
     torch.onnx.export(onnx_model,
                       dummy_input,
                       onnx_fpath,
@@ -52,8 +31,8 @@ def save_onnx(config, state_dict_fpath, onnx_fpath):
                       dynamic_axes={'batch':{0:'seq_len'}, 'output':{0:'seq_len'}},
                       opset_version=11)
     
-def get_html_str(onnx_fpath, vocab_fpath):
-    with open('./html/demo_merged.html') as f:
+def save_merged_html(onnx_fpath, vocab_fpath, html_dir, html_fname='./html/demo_merged.html'):
+    with open(os.path.join('./html/',html_fname)) as f:
         string=f.read()
     with open(vocab_fpath) as f:
         vocab = json.loads(f.read())
@@ -61,15 +40,15 @@ def get_html_str(onnx_fpath, vocab_fpath):
     with open(onnx_fpath, "rb") as f:
         onnx_base64 = base64.b64encode(f.read()).decode('ascii')
     string=string.replace("!!!<<<MODEL>>>!!!", onnx_base64)  
-    return string
+    with open(os.path.join(html_dir,html_fname), "w") as f:
+        f.write(string)
 
 def save_html(config, state_dict_fpath, html_dir, vocab_fpath):    
     onnx_fpath = os.path.join(html_dir,state_dict_fpath.split('/')[-1].split('.')[0])+'.onnx'
     save_onnx(config, state_dict_fpath, onnx_fpath)
     
-    merged_html_str = get_html_str(onnx_fpath, vocab_fpath)
-    with open(os.path.join(html_dir,'demo_merged.html'), "w") as f:
-        f.write(merged_html_str)
+    save_merged_html(onnx_fpath, vocab_fpath, html_dir, 'demo_merged.html')
+    #save_merged_html(onnx_fpath, vocab_fpath, html_dir, 'demo_merged_ort.html')
         
     with open(vocab_fpath) as f:
         vocab_str = f.read()

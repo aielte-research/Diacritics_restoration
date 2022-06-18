@@ -3,6 +3,7 @@ import math
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import concurrent
 
 use_cuda = torch.cuda.is_available()
 def to_cuda(var):
@@ -73,3 +74,55 @@ def df_avg(df,weights=None):
         except:
             ret[col]=None
     return ret
+
+class Parallel_loop():
+    def __init__(self, generator, params={}):
+        self.generator = generator
+        for k, v in params.items():
+            setattr(self, k, v)
+            
+        self.dataA = next(generator)
+        self.useA = True
+        self.pool = concurrent.futures.ThreadPoolExecutor()
+        
+    def function(self):
+        pass
+    
+    def retrieve_next(self):
+        try:
+            return next(self.generator)
+        except:
+            return None
+    
+    def get_curr_data(self):
+        if self.useA:
+            return self.dataA
+        else:
+            return self.dataB
+    
+    def get_next_data(self):
+        if self.useA:
+            return self.dataB
+        else:
+            return self.dataA
+    
+    def set_next_data(self, x):
+        if self.useA:
+            self.dataB = x
+        else:
+            self.dataA = x
+        
+    def next_step(self): 
+        self.set_next_data(self.pool.submit(self.retrieve_next))
+        
+        self.function(self.get_curr_data())
+                    
+        self.set_next_data(self.get_next_data().result())
+        
+        self.useA = not self.useA
+        
+        return self.get_curr_data()!=None
+    
+    def __call__(self):
+        while(self.next_step()):
+            pass
