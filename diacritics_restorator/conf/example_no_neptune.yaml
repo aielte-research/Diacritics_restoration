@@ -5,6 +5,7 @@ logger_params:
   accuracy_types: !!python/tuple [chr, imp_chr, alpha_word, amb_word, sntnc]
   accuracy_plot_dashes: !!python/tuple [dotted,dotted,dashed,dashed,solid]
   benchmarks: !!python/tuple [{"soft_deaccent":{"keep_rate": 0.2}}, {"deaccent": null}]
+  neptune_logging: false
   #baselines: !!python/tuple [hunaccent]
 data_params:
   language: "HU" # HU, PL, CZ, SK

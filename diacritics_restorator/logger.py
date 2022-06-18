@@ -7,7 +7,7 @@ import yaml
 import pandas as pd
 from shutil import copyfile, copytree
 
-import sys
+import sys, glob
 sys.path.append('../')
 import my_plot
 import cfg_parser
@@ -16,9 +16,6 @@ import create_html
 
 import time
 
-import neptune.new as neptune
-from neptune.new.types import File
-
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -26,7 +23,10 @@ import _pickle as cPickle
 
 import importlib
 import shutil
-import subprocess
+
+import neptune.new as neptune
+
+from unittest.mock import MagicMock
 
 class Endplot_elem():
     def __init__(self, name, y_name, legend_loc="bottom_right"):
@@ -49,7 +49,7 @@ class Endplot_elem():
                                  )
         
 class Endplot():
-    def __init__(self, save_dir, experiment, acc_types=['chr'], benchmarks=[{"deaccent":None}]):
+    def __init__(self, save_dir, acc_types=['chr'], benchmarks=[{"deaccent":None}]):
         self.aggr_dev_accs = {str(benchmark): {a_t: Endplot_elem(name = 'dev_aggregate_'+a_t+'_accuracies_'+str(benchmark),
                                                             y_name = a_t+" accuracy "+str(benchmark))
                                           for a_t in acc_types}
@@ -83,7 +83,7 @@ class Endplot():
                     self.aggr_dev_accs[str(benchmark)][a_t].baselines[baseline_name+"_"+a_t]=baselines["dev"][str(benchmark)][baseline_name][a_t]
                     #self.aggr_train_accs[str(benchmark)][a_t].baselines[baseline_name+"_"+a_t]=baselines["train"][str(benchmark)][baseline_name][a_t]
         
-    def save(self,experiment):
+    def save(self,experiment=None):
         for benchmark in self.benchmarks:
             for a_t in self.acc_types:
                 # fpath = self.aggr_train_accs[str(benchmark)][a_t].save(self.plotter, self.names)
@@ -123,7 +123,8 @@ class Logger():
             "baselines": [],
             "benchmarks": [{"deaccent":None}],
             "draw_network": None,
-            "endplot_extend_from": None
+            "endplot_extend_from": None,
+            "neptune_logging": True
         }
         logger_params = self.test_cases[0]["logger_params"]
         for key in default_params:
@@ -133,6 +134,9 @@ class Logger():
 
         with open('neptune_cfg.yaml') as file: 
             self.neptune_cfg = yaml.load(file, Loader = yaml.FullLoader)
+
+        if self.neptune_cfg['api_token']==None:
+            self.neptune_logging = False
 
         if self.draw_network!=None:
             spec = importlib.util.spec_from_file_location("visualize_TCN", "../tools/visualize_TCN.py")
@@ -151,12 +155,15 @@ class Logger():
         self.plotter = my_plot.Bokeh_plotter()
         
         if len(self.test_cases)>1:
-            self.aggr_experiment = neptune.init(project = self.neptune_cfg['project_qualified_name'],api_token = self.neptune_cfg['api_token'])
+            if self.neptune_logging:
+                self.aggr_experiment = neptune.init(project = self.neptune_cfg['project_qualified_name'],api_token = self.neptune_cfg['api_token'])
+            else:
+                self.aggr_experiment = MagicMock()
 
             self.save_yaml(orig_config, 'cfg_orig', aggr = True)
             self.save_yaml(self.test_cases, 'cfg_serialized', aggr = True)
 
-            self.endplot = Endplot(self.root_dir, self.aggr_experiment, self.accuracy_types, self.benchmarks)
+            self.endplot = Endplot(self.root_dir, self.accuracy_types, self.benchmarks)
             if self.endplot_extend_from!=None:
                 self.endplot.load_class(os.path.join(self.endplot_extend_from, "endplot_class"))
                 
@@ -206,22 +213,22 @@ class Logger():
         if len(self.test_cases)>1:
             self.endplot.names.append(test_case["name"])
             print(self.endplot.names)
+        if self.neptune_logging:
+            self.experiment = neptune.init(project = self.neptune_cfg['project_qualified_name'],
+                                           api_token = self.neptune_cfg['api_token'],
+                                           source_files = ['*.py', "./models/*.py", 'environment.yml','important_chars.json'],
+                                           tags = list(self.tags))
+            self.experiment["parameters"] = test_case
+        else:
+            self.experiment = MagicMock()
         
-        self.experiment = neptune.init(project = self.neptune_cfg['project_qualified_name'],api_token = self.neptune_cfg['api_token'],
-                                        source_files = ['*.py', "./models/*.py", '../my_functions.py', '../my_plot.py', 'environment.yml', 'environment.yml','important_chars.json'])
-        self.experiment["parameters"] = test_case
+        for file in glob.iglob("./*.py"):
+            if os.path.isfile(file):
+                shutil.copy2(file, self.src_dir)
+        os.makedirs(os.path.join(self.src_dir, "models"))
+        copyfile(os.path.join("./models/base.py"), os.path.join(self.src_dir, "models/base.py"))
+        copyfile(os.path.join("./models",test_case["net_params"]["fname"]), os.path.join(self.src_dir, "models", test_case["net_params"]["fname"]))
         
-        #copyfile('eval.py', os.path.join(self.exp_dir, 'eval.py'))
-        copyfile('my_functions.py', os.path.join(self.src_dir, "my_functions.py"))
-        copyfile('my_plot.py', os.path.join(self.src_dir, "my_plot.py"))
-        copyfile('tokenizer.py', os.path.join(self.src_dir, 'tokenizer.py'))
-        copyfile('trainer.py', os.path.join(self.src_dir, 'trainer.py'))
-        copyfile('evaluator.py', os.path.join(self.src_dir, 'evaluator.py'))
-        #copyfile('examples.txt', os.path.join(self.src_dir, 'examples.txt'))
-        #copyfile('examples.tab', os.path.join(self.src_dir, 'examples.tab'))
-        copyfile(os.path.join("./models",test_case["net_params"]["fname"]), os.path.join(self.src_dir, test_case["net_params"]["fname"]))
-        
-        self.experiment["sys/tags"].add(list(test_case["tags"]))
         self.save_yaml(test_case, "config")
         
         self.plotter.save_dir = self.pic_dir
@@ -380,7 +387,6 @@ class Logger():
         torch.save(model_state_dict, state_dict_fpath)
 
         #self.log_artifact(state_dict_fpath, category='model/state_dict')
-
         self.experiment['metrics/saved_model_size'].log(human_format(os.path.getsize(state_dict_fpath), kilo=1024))
         self.myprint('Model saved:', fname, human_format(os.path.getsize(state_dict_fpath), kilo=1024))
         
