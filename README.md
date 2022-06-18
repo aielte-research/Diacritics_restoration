@@ -68,7 +68,7 @@ offline_logging_dir:
 
 ### Installation
 
-For the moment refer to the example below and install the missing packages manually.
+Refer to the example below and install the missing packages manually, or use the `environment.yml` file (`conda env create -f environment.yml`).
 
 <!-- USAGE EXAMPLES -->
 ## Usage
