@@ -57,7 +57,7 @@ For training the model:
 ### Prerequisites
 
 The project logs both locally and to <a href="https://neptune.ai/"><strong>neptune.ai</strong></a>,
-to use a neptune.ai an is neeeded. Logging to neptune can be disabled for individual experiments in the experiment's config, or globally by not providing an api token in the `neptune_cfg.yaml`.
+to use a neptune.ai an account is neeeded. Logging to neptune can be disabled for individual experiments in the experiment's config, or globally by not providing an api token in the `neptune_cfg.yaml`.
 
 Copy `neptune_cfg_template.yaml` to `neptune_cfg.yaml`, and fill out the appropriate details:
 ```yaml
