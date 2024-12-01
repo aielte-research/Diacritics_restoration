@@ -11,7 +11,7 @@
     <h2 align="center">Lightweight Diacritics Restoration<br />with<br />Dilated Convolutional Neural Networks</h2>
     <h3 align="center">
         <br />
-            <a href="https://web.cs.elte.hu/~csbalint/diacritics/demo.html?lang=en&model_lang=HU" target="_blank"><strong>Try the model »</strong></a>
+            <a href="https://ai.elte.hu/csbalint/diacritics/demo.html?lang=en&model_lang=HU" target="_blank"><strong>Try the model »</strong></a>
         <br />
     </h3>
 </div>
